@@ -3,11 +3,10 @@ import re
 import sys
 from urlparse import *
 from thread import *
-from multiprocessing import *
-import threading
+
 
 # Constants that determine the amount of concurrent users that can be on the proxy and the socket buffer size.
-MAX_USERS = 1
+MAX_USERS = 100
 BUFFER_SIZE = 2048
 
 # The set up to get the port number
@@ -17,90 +16,123 @@ if len(sys.argv) != 2:
 serverPort = int(sys.argv[1])
 
 
+# Method that begins the proxy to listen for incoming requests.
 def start_proxy():
+    server_socket = socket(AF_INET, SOCK_STREAM)
     try:
-        server_socket = socket(AF_INET, SOCK_STREAM)
+        # Opening the listening socket.
         server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         server_socket.bind(('', serverPort))
         server_socket.listen(MAX_USERS)
-        print "server Ready"
     except Exception:
+        # If an error occurs opening the listener socket, the proxy closes.
         exit()
 
     while 1:
+        # Code to accept a new client, and start a new thread for the new client.
         connection_socket, client_addr = server_socket.accept()
         http_request = connection_socket.recv(BUFFER_SIZE)
-        while "\n" not in http_request:
-            http_request += connection_socket.recv(BUFFER_SIZE)
-        # Eventually use multiprocessing to make this part concurrent.
-        new_connection(connection_socket, client_addr, http_request)
+        start_new_thread(new_connection, (connection_socket, http_request))
 
 
-def new_connection(connection, client_address, http_request):
+# Method that is called to handle a new client, whenever they join.
+def new_connection(connection, http_request):
     try:
+        # First the request is split into each separate header and the request.
         request = http_request.split('\n')
-        request_line = request[0].split(" ")
+        # The rest line is parsed to be checked for validity.
+        request_line = request[0].split(' ')
         header_list = request
         del header_list[0]
-        # for header in header_list:
-        #     if not re.search("^.*: .*", header):
-        #         print("Error(400): Invalid Header")
-        #         # Create HTTP response to notify user.
+        # Each header is checked for formatting.
+        for header in header_list:
+            if not re.search("^.*: .*", header):
+                connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                          + "Content-Type: text/html\n"
+                          + "\n"  # Important!
+                          + "<html><body>ERROR(400)\nMALFORMED REQUEST</body></html>\n")
+                connection.close()
+                return
+        if "Connection: close" not in http_request and "Connection: keep-alive" not in http_request:
+            http_request += "Connection: close\r\n"
+        elif "Connection: keep-alive" in http_request:
+            http_request = http_request.replace("Connection: keep-alive", "Connection: close")
 
+        # Test for if the request line only has 3 objects.
         if len(request_line) is not 3:
-            print("Error(400): Improperly formatted request line")
-            # Create HTTP response to notify user.
+            connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                            + "Content-Type: text/html\n"
+                            + "\n"  # Important!
+                            + "<html><body>ERROR(400)\nMALFORMED REQUEST LINE</body></html>\n")
+            connection.close
+            return
+        # Code to ensure the request is a GET request.
         method = request_line[0]
         if re.search("^POST", method) or re.search("^HEAD", method):
-            print("Error(501): POST/HEAD not implemented")
-            # Create HTTP response to notify user.
+            connection.send("HTTP/1.1 501 NOT IMPLEMENTED\n"
+                            + "Content-Type: text/html\n"
+                            + "\n"  # Important!
+                            + "<html><body>ERROR(501)\nUNIMPLEMENTED METHOD CALL</body></html>\n")
+            connection.close()
+            return
         elif not re.search("^GET", method):
-            print("Error(400): no method call found")
-            # Create HTTP response to notify user.
+            connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                            + "Content-Type: text/html\n"
+                            + "\n"  # Important!
+                            + "<html><body>ERROR(400)\nMALFORMED REQUEST</body></html>\n")
+            connection.close()
+            return
         else:
             url = request_line[1]
+            # Code to ensure that the correct HTTP version is being requested.
             http_version = request_line[2]
             if not re.search("HTTP/1.0\r", http_version):
-                print("Error(400): Request must be HTTP/1.0")
-                # Create HTTP response to notify user.
+                connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                                + "Content-Type: text/html\n"
+                                + "\n"  # Important!
+                                + "<html><body>ERROR(400)\nWRONG HTTP VERSION</body></html>\n")
+                connection.close()
+                return
             parsed_url = urlparse(url)
 
+            # Code to ensure the URL is valid.
             if not parsed_url.scheme:
-                print("Error(400): URL is malformed")
-                # Create HTTP response to notify user.
+                connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                                + "Content-Type: text/html\n"
+                                + "\n"  # Important!
+                                + "<html><body>ERROR(400)\nMALFORMED URL</body></html>\n")
+                connection.close()
+                return
 
+            # Code to check whether to use port 80, or a port specified by the user.
             port = 80
             if parsed_url.port is not None:
                 port = parsed_url.port
 
-            get_http_response(parsed_url.geturl(), port, connection, http_request, client_address)
+            # The URL is appropriately stripped, so it can be used to connect through a socket.
+            url = url.replace("http://", "")
+            sep = '/'
+            hostname = url.split(sep, 1)[0]
+
+            http_socket = socket(AF_INET, SOCK_STREAM)
+            http_socket.connect((hostname, port))
+            http_socket.send(http_request)
+
+            # The HTTP response code to parse back the response from the socket.
+            while 1:
+                response = http_socket.recv(BUFFER_SIZE)
+                print response
+                if len(response) > 0:
+                    connection.send(response)
+                else:
+                    break
+
+            http_socket.close()
+            connection.close()
+            return
     except Exception, e:
-        print(e)
-        exit()
-
-
-def get_http_response(url, port, client_connection, http_request, client_address):
-    try:
-        http_socket = socket(AF_INET, SOCK_STREAM)
-        http_socket.connect((url, port))
-
-        http_request += "Connection: close\r\n"
-
-        http_socket.send(http_request)
-
-        while 1:
-            response = http_socket.recv(BUFFER_SIZE)
-            print response
-
-            if len(response) > 0:
-                client_connection.send(response)
-            else:
-                break
-        http_socket.close()
-        client_connection.close()
-    except Exception, e:
-        print(e)
-        exit()
+        connection.close()
+        return
 
 
 start_proxy()
