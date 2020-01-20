@@ -44,12 +44,13 @@ def new_connection(connection, http_request):
         request_line = request[0].split(' ')
         header_list = request
         del header_list[0]
-        # Each header is checked for formatting.
+
         for header in header_list:
-            if not re.search("^.*: .*", header):
-                connection.send("HTTP/1.1 400 BAD REQUEST\n"
-                          + "Content-Type: text/html\n"
-                          + "\n"  # Important!
+            header = header.replace("\r", "")
+
+            if not re.search("^.*: .*", header) and header is not "":
+                connection.send("HTTP/1.0 400 BAD REQUEST\n"
+                          + "Content-Type: text/html\n\n"
                           + "<html><body>ERROR(400)\nMALFORMED REQUEST</body></html>\n")
                 connection.close()
                 return
@@ -60,25 +61,22 @@ def new_connection(connection, http_request):
 
         # Test for if the request line only has 3 objects.
         if len(request_line) is not 3:
-            connection.send("HTTP/1.1 400 BAD REQUEST\n"
-                            + "Content-Type: text/html\n"
-                            + "\n"  # Important!
+            connection.send("HTTP/1.0 400 BAD REQUEST\n"
+                            + "Content-Type: text/html\n\n"
                             + "<html><body>ERROR(400)\nMALFORMED REQUEST LINE</body></html>\n")
             connection.close
             return
         # Code to ensure the request is a GET request.
         method = request_line[0]
         if re.search("^POST", method) or re.search("^HEAD", method):
-            connection.send("HTTP/1.1 501 NOT IMPLEMENTED\n"
-                            + "Content-Type: text/html\n"
-                            + "\n"  # Important!
+            connection.send("HTTP/1.0 501 NOT IMPLEMENTED\n"
+                            + "Content-Type: text/html\n\n"
                             + "<html><body>ERROR(501)\nUNIMPLEMENTED METHOD CALL</body></html>\n")
             connection.close()
             return
         elif not re.search("^GET", method):
-            connection.send("HTTP/1.1 400 BAD REQUEST\n"
-                            + "Content-Type: text/html\n"
-                            + "\n"  # Important!
+            connection.send("HTTP/1.0 400 BAD REQUEST\n"
+                            + "Content-Type: text/html\n\n"
                             + "<html><body>ERROR(400)\nMALFORMED REQUEST</body></html>\n")
             connection.close()
             return
@@ -87,9 +85,8 @@ def new_connection(connection, http_request):
             # Code to ensure that the correct HTTP version is being requested.
             http_version = request_line[2]
             if not re.search("HTTP/1.0\r", http_version):
-                connection.send("HTTP/1.1 400 BAD REQUEST\n"
-                                + "Content-Type: text/html\n"
-                                + "\n"  # Important!
+                connection.send("HTTP/1.0 400 BAD REQUEST\n"
+                                + "Content-Type: text/html\n\n"
                                 + "<html><body>ERROR(400)\nWRONG HTTP VERSION</body></html>\n")
                 connection.close()
                 return
@@ -98,8 +95,7 @@ def new_connection(connection, http_request):
             # Code to ensure the URL is valid.
             if not parsed_url.scheme:
                 connection.send("HTTP/1.1 400 BAD REQUEST\n"
-                                + "Content-Type: text/html\n"
-                                + "\n"  # Important!
+                                + "Content-Type: text/html\n\n"
                                 + "<html><body>ERROR(400)\nMALFORMED URL</body></html>\n")
                 connection.close()
                 return
@@ -116,6 +112,7 @@ def new_connection(connection, http_request):
 
             http_socket = socket(AF_INET, SOCK_STREAM)
             http_socket.connect((hostname, port))
+            print "Request Sent"
             http_socket.send(http_request)
 
             # The HTTP response code to parse back the response from the socket.
