@@ -3,17 +3,19 @@ import re
 import sys
 from urlparse import *
 from thread import *
-
+import hashlib
+import requests
 
 # Constants that determine the amount of concurrent users that can be on the proxy and the socket buffer size.
 MAX_USERS = 100
 BUFFER_SIZE = 2048
 
 # The set up to get the port number
-if len(sys.argv) != 2:
+if len(sys.argv) is not 3:
     print "Invalid number of arguments"
     exit()
 serverPort = int(sys.argv[1])
+apiKey = sys.argv[2]
 
 
 # Method that begins the proxy to listen for incoming requests.
@@ -27,17 +29,20 @@ def start_proxy():
     except Exception:
         # If an error occurs opening the listener socket, the proxy closes.
         exit()
-
     while 1:
-        # Code to accept a new client, and start a new thread for the new client.
-        connection_socket, client_addr = server_socket.accept()
-        http_request = connection_socket.recv(BUFFER_SIZE)
-        start_new_thread(new_connection, (connection_socket, http_request))
+        try:
+            # Code to accept a new client, and start a new thread for the new client.
+            connection_socket, client_addr = server_socket.accept()
+            http_request = connection_socket.recv(BUFFER_SIZE)
+            start_new_thread(new_connection, (connection_socket, http_request))
+        except Exception:
+            http_request.close()
 
 
 # Method that is called to handle a new client, whenever they join.
 def new_connection(connection, http_request):
     try:
+        
         # First the request is split into each separate header and the request.
         request = http_request.split('\n')
         # The rest line is parsed to be checked for validity.
@@ -94,7 +99,7 @@ def new_connection(connection, http_request):
 
             # Code to ensure the URL is valid.
             if not parsed_url.scheme:
-                connection.send("HTTP/1.1 400 BAD REQUEST\n"
+                connection.send("HTTP/1.0 400 BAD REQUEST\n"
                                 + "Content-Type: text/html\n\n"
                                 + "<html><body>ERROR(400)\nMALFORMED URL</body></html>\n")
                 connection.close()
@@ -112,15 +117,17 @@ def new_connection(connection, http_request):
 
             http_socket = socket(AF_INET, SOCK_STREAM)
             http_socket.connect((hostname, port))
-            print "Request Sent"
             http_socket.send(http_request)
 
             # The HTTP response code to parse back the response from the socket.
             while 1:
                 response = http_socket.recv(BUFFER_SIZE)
-                print response
                 if len(response) > 0:
-                    connection.send(response)
+
+                    if re.search("HTTP/1.0 200", response) or re.search("HTTP/1.1 200", response):
+                        virus_check_and_send(connection, response)
+                    else:
+                        connection.send(response)
                 else:
                     break
 
@@ -132,4 +139,21 @@ def new_connection(connection, http_request):
         return
 
 
+# Method that uses Virus Total to check whether the resulting response contains malware. If so,
+# the method returns a basic HTTP response letting the user know, otherwise, the method sends back the
+# requested response.
+def virus_check_and_send(conn_socket, response):
+    params = {'apikey': str(apiKey), 'resource': str(hashlib.md5(response).hexdigest())}
+    virus_response = requests.get("https://www.virustotal.com/vtapi/v2/file/report", params=params)
+
+    if re.search("\"detected\": true", virus_response.text):
+        conn_socket.send("HTTP/1.0 200 OK\n"
+                        + "Content-Type: text/html\n\n"
+                        + "<html><body>The requested page has been marked as containing malware</body></html>\n")
+    else:
+        conn_socket.send(response)
+    return
+
+
 start_proxy()
+
