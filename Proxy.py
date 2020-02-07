@@ -1,3 +1,7 @@
+# Author: Carson Woods
+# CS4480
+# U1074881
+
 from socket import *
 import re
 import sys
@@ -143,17 +147,18 @@ def new_connection(connection, http_request):
 # the method returns a basic HTTP response letting the user know, otherwise, the method sends back the
 # requested response.
 def virus_check_and_send(conn_socket, response):
-    params = {'apikey': str(apiKey), 'resource': str(hashlib.md5(response).hexdigest())}
+    object_test = response.split("\r\n\r\n")
+    params = {'apikey': str(apiKey), 'resource': str(hashlib.md5(object_test[1]).hexdigest())}
     virus_response = requests.get("https://www.virustotal.com/vtapi/v2/file/report", params=params)
-
     if re.search("\"detected\": true", virus_response.text):
         conn_socket.send("HTTP/1.0 200 OK\n"
                         + "Content-Type: text/html\n\n"
-                        + "<html><body>The requested page has been marked as containing malware</body></html>\n")
+                        + "<html><body>The requested page has been marked as containing malware.</body></html>\n")
     else:
         conn_socket.send(response)
     return
 
 
 start_proxy()
+
 
