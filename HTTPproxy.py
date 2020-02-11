@@ -3,6 +3,7 @@
 # U1074881
 
 from socket import *
+from optparse import *
 import re
 import sys
 from urlparse import *
@@ -15,12 +16,9 @@ MAX_USERS = 100
 BUFFER_SIZE = 2048
 
 # The set up to get the port number
-if len(sys.argv) is not 3:
-    print "Invalid number of arguments"
-    exit()
-serverPort = int(sys.argv[1])
-apiKey = sys.argv[2]
-
+parser = OptionParser()
+parser.add_option("-k", )
+serverPort = 2100
 
 # Method that begins the proxy to listen for incoming requests.
 def start_proxy():
@@ -151,9 +149,7 @@ def virus_check_and_send(conn_socket, response):
     params = {'apikey': str(apiKey), 'resource': str(hashlib.md5(object_test[1]).hexdigest())}
     virus_response = requests.get("https://www.virustotal.com/vtapi/v2/file/report", params=params)
     if re.search("\"detected\": true", virus_response.text):
-        conn_socket.send("HTTP/1.0 200 OK\n"
-                        + "Content-Type: text/html\n\n"
-                        + "<html><body>The requested page has been marked as containing malware.</body></html>\n")
+        conn_socket.send("content blocked")
     else:
         conn_socket.send(response)
     return
