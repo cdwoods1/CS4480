@@ -25,13 +25,9 @@ serverPort = 2100
 # Method that begins the proxy to listen for incoming requests.
 def start_proxy():
     server_socket = socket(AF_INET, SOCK_STREAM)
-    try:
-        # Opening the listening socket.
-        server_socket.bind(('', serverPort))
-        server_socket.listen(MAX_USERS)
-    except Exception:
-        # If an error occurs opening the listener socket, the proxy closes.
-        exit()
+    # Opening the listening socket.
+    server_socket.bind(('', serverPort))
+    server_socket.listen(MAX_USERS)
     while 1:
         try:
             # Code to accept a new client, and start a new thread for the new client.
@@ -44,8 +40,12 @@ def start_proxy():
 # Method that is called to handle a new client, whenever they join.
 def new_connection(connection):
     try:
+        http_request = ""
         # First the request is split into each separate header and the request.
-        http_request = connection.recv(BUFFER_SIZE)
+        while True:
+            http_request += connection.recv(BUFFER_SIZE)
+            if http_request.endswith("\n\n") or http_request.endswith("\r\n\r\n"):
+                break
 
         request = http_request.split('\n')
         # The rest line is parsed to be checked for validity.
@@ -99,7 +99,8 @@ def new_connection(connection):
         # Code to ensure the request is a GET request.
 
         url = request_line[1]
-        p = '(?:http.*://)?(?P<host>[^:/ ]+).?(?P<port>[0-9]*).*'
+        hostname = url.replace("http://", "")
+        hostname = hostname.split("/")[0]
 
         # Code to ensure that the correct HTTP version is being requested.
         http_version = request_line[2]
@@ -110,41 +111,41 @@ def new_connection(connection):
                                 + "<html><body>ERROR(400) WRONG HTTP VERSION</body></html>")
             connection.close()
             return
-        parsed_url = urlparse(url)
-
         # Code to ensure the URL is valid.
-
-        m = re.search(p, url)
-        hostname = m.group('host')
-        port = m.group('port')
-        if port is '':
+        if ":" in hostname:
+            hostname, port = hostname.split(":")
+        else:
             port = 80
+
         port = int(port)
 
         http_socket = socket(AF_INET, SOCK_STREAM)
-        http_socket.settimeout(5)
         try:
             http_socket.connect((hostname, port))
-        except Exception:
+            http_socket.send(http_request)
+        except Exception, e:
+            print e
             http_socket.close()
             connection.close()
             return
-        http_socket.send(http_request)
 
         # The HTTP response code to parse back the response from the socket.
         response = ""
         while 1:
-            res = http_socket.recv(BUFFER_SIZE)
-            if len(res) > 0:
+            try:
+                res = http_socket.recv(BUFFER_SIZE)
                 response += res
-            else:
-                if re.search("HTTP/1.0 200", response) or re.search("HTTP/1.1 200", response):
-                    virus_check_and_send(connection, response)
-                else:
-                    connection.send(response)
-                connection.close()
-                http_socket.close()
+                if res is '':
+                    break
+            except Exception, e:
+                print e
                 break
+        if re.search("HTTP/1.0 200", response) or re.search("HTTP/1.1 200", response):
+            virus_check_and_send(connection, response)
+        else:
+            connection.send(response)
+        connection.close()
+        http_socket.close()
         return
     except Exception, e:
         print e
@@ -159,7 +160,13 @@ def virus_check_and_send(conn_socket, response):
     object_test = response.split("\r\n\r\n")
     result = hashlib.md5(object_test[1]).hexdigest()
     params = {'apikey': str(apiKey), 'resource': result}
-    virus_response = requests.get("https://www.virustotal.com/vtapi/v2/file/report", params=params)
+    try:
+        virus_response = requests.get("https://www.virustotal.com/vtapi/v2/file/report", params=params)
+    except Exception:
+        conn_socket.send("HTTP/1.0 500 INTERNAL SERVER ERROR\r\n"
+                         + "Content-Type: text/html\r\n"
+                         + "Connection: close\r\n\r\n"
+                         + "<html><body>Issue with virus request</body></html>")
     if re.search("\"response_code\": 0", virus_response.text):
         conn_socket.send(response)
         return
